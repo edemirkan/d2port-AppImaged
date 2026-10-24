@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
+data_dir="$data_home/d2port"
+mkdir -p "$data_dir"
+cp "$APPDIR/usr/share/d2port/archivos.txt" "$data_dir/archivos.txt"
+
+if [ "${1:-}" = "--import" ]; then
+    shift
+    exec "$APPDIR/usr/bin/d2port-importar" --destino "$data_dir" "$@"
+fi
+
+cd "$data_dir"
+exec "$APPDIR/usr/bin/d2port" "$@"

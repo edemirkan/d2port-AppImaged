@@ -31,6 +31,7 @@ jobs:
             -DCASC_BUILD_SHARED_LIB=OFF \
             -DCASC_BUILD_STATIC_LIB=ON \
             -DCASC_BUILD_TESTS=OFF \
+            -DCMAKE_CXX_FLAGS=-DLPDWORD=PDWORD \
             -DCMAKE_DISABLE_FIND_PACKAGE_ZLIB=ON
           cmake --build "$RUNNER_TEMP/CascLib/build" --parallel "$(nproc)"
           gcc -O2 -Wall -Wextra \

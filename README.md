@@ -1020,6 +1020,13 @@ cmake --build build -j
 ./build/d2port
 ```
 
+The Linux x86_64 AppImage is built by the GitHub Actions workflow and is
+available as a workflow artifact. It includes the importer but no game files.
+Run `./d2port-linux-x86_64.AppImage --import --idioma enUS` to import from
+your own Diablo II: Resurrected installation, then launch the AppImage. Its
+imported files and saves are kept in `$XDG_DATA_HOME/d2port`, or
+`$HOME/.local/share/d2port` when `XDG_DATA_HOME` is unset.
+
 The importer looks for Resurrected by itself (in Wine, Lutris, Bottles or
 Steam prefixes; under WSL, the Windows one) and asks if it cannot find it.
 The importer from the release package works too, with

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Diablo II Port
+Exec=AppRun
+Icon=d2port
+Categories=Game;
+Terminal=false

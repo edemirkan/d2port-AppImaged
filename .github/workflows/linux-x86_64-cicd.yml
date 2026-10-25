@@ -1,0 +1,104 @@
+name: Linux x86_64 AppImage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake git libsdl2-dev librsvg2-bin wget
+
+      - name: Build static game-file importer
+        run: |
+          git clone --depth 1 https://github.com/ladislav-zezula/CascLib.git "$RUNNER_TEMP/CascLib"
+          cmake -S "$RUNNER_TEMP/CascLib" -B "$RUNNER_TEMP/CascLib/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCASC_BUILD_SHARED_LIB=OFF \
+            -DCASC_BUILD_STATIC_LIB=ON \
+            -DCASC_BUILD_TESTS=OFF \
+            -DCMAKE_CXX_FLAGS=-DLPDWORD=PDWORD \
+            -DCMAKE_DISABLE_FIND_PACKAGE_ZLIB=ON
+          cmake --build "$RUNNER_TEMP/CascLib/build" --parallel "$(nproc)"
+          mkdir -p build
+          gcc -O2 -Wall -Wextra \
+            -DCASCLIB_NO_AUTO_LINK_LIBRARY -DCASCLIB_NODEBUG \
+            -I"$RUNNER_TEMP/CascLib/src" \
+            -c tools/d2port-importar.c -o "$RUNNER_TEMP/d2port-importar.o"
+          g++ -static -s "$RUNNER_TEMP/d2port-importar.o" \
+            "$RUNNER_TEMP/CascLib/build/libcasc.a" \
+            -o build/d2port-importar -pthread
+
+      - name: Build and test
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel "$(nproc)"
+          build/d2port --selftest
+
+      - name: Prepare AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/d2port AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build/d2port-importar AppDir/usr/bin/d2port-importar
+          cp tools/archivos-del-juego.txt AppDir/usr/share/d2port/archivos.txt
+          cp .github/appimage/d2port.desktop AppDir/usr/share/applications/
+          rsvg-convert --width=256 --height=256 .github/appimage/d2port.svg > AppDir/usr/share/icons/hicolor/256x256/apps/d2port.png
+          cp .github/appimage/AppRun AppDir/AppRun
+          chmod +x AppDir/AppRun
+
+      - name: Build AppImage
+        run: |
+          wget --quiet https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage --appimage-extract-and-run \
+            --appdir AppDir \
+            --executable build/d2port \
+            --desktop-file AppDir/usr/share/applications/d2port.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/d2port.png \
+            --output appimage
+          appimage="$(find . -maxdepth 1 -type f -name '*.AppImage' ! -name 'linuxdeploy-x86_64.AppImage' -print -quit)"
+          test -n "$appimage"
+          mv "$appimage" d2port-linux-x86_64.AppImage
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: d2port-linux-x86_64
+          path: d2port-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'release'
+    needs: appimage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: d2port-linux-x86_64
+          path: dist
+
+      - name: Attach packages to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            dist/*.AppImage \
+            --clobber

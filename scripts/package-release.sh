@@ -59,12 +59,38 @@ DIR="\$(dirname "\$(readlink -f "\$0")")"
 "\$DIR/.data/d2port/d2port-importar" --idioma $lang --sin-pausa > /userdata/system/logs/d2port-importar.log 2>&1
 EOF
         chmod +x "$port/batocera/ports/$name"
+        # Desde Steam (docs/steam.md): la pantalla del juego muestra el QR para iniciar sesión y el avance
+        if [ $lang = es ]; then name="Importar desde Steam BETA (Español).sh" code=esMX; else name="Import from Steam BETA (English).sh" code=enUS; fi
+        cat > "$port/batocera/ports/$name" <<EOF
+#!/bin/bash
+# Baja Diablo II: Resurrected de tu cuenta de Steam (escaneando un código QR con la app de Steam) y lo importa
+DIR="\$(dirname "\$(readlink -f "\$0")")"
+cd "\$DIR/.data/d2port" || exit 1
+./d2port --importar-steam $code > /userdata/system/logs/d2port-steam.log 2>&1
+EOF
+        chmod +x "$port/batocera/ports/$name"
+    done
+fi
+# Linux (PC): lo mismo desde Steam, en la terminal
+if [ -f "$port/importador/linux/d2port-importar" ]; then
+    for lang in es en; do
+        if [ $lang = es ]; then name="Importar desde Steam BETA (Español).sh" code=esMX; else name="Import from Steam BETA (English).sh" code=enUS; fi
+        printf '#!/bin/sh\n# Baja Diablo II: Resurrected de tu cuenta de Steam y lo importa (docs/steam.md)\ncd "$(dirname "$0")" && ./d2port-importar --steam --idioma %s\n' \
+            "$code" > "$port/importador/linux/$name"
+        chmod +x "$port/importador/linux/$name"
     done
 fi
 cp "$root/README.md" "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$port/" # las instrucciones (en inglés) y las licencias
 
 # Windows: el juego, SDL2.dll, el importador, la lista y dos .bat para importar (en una sola carpeta:
 # el importador copia a su data/ y el juego guarda en su save/)
+# Windows: "Importar desde Steam" (docs/steam.md) en una consola, que muestra el QR para iniciar sesión
+steam_bat() { # código-de-idioma carpeta
+    local name="Import from Steam BETA (English).bat"
+    [ "$1" = esMX ] && name="Importar desde Steam BETA (Español).bat"
+    printf '@echo off\r\nrem Baja Diablo II: Resurrected de tu cuenta de Steam y lo importa a esta carpeta\r\ncd /d "%%~dp0"\r\n"%%~dp0d2port-importar.exe" --steam --idioma %s\r\n' \
+        "$1" > "$2/$name"
+}
 win="$pub/diablo2-port-windows"
 sdl="${SDL2_MINGW:-$HOME/sdl2-mingw/SDL2-2.30.12/x86_64-w64-mingw32}"
 if [ -f "$root/build-win/d2port.exe" ] && [ -f "$sdl/bin/SDL2.dll" ] && [ -f "$imp/windows/d2port-importar.exe" ]; then
@@ -76,6 +102,7 @@ if [ -f "$root/build-win/d2port.exe" ] && [ -f "$sdl/bin/SDL2.dll" ] && [ -f "$i
         # (con la ruta entera: con NoDefaultCurrentDirectoryInExePath, cmd no busca en la carpeta actual)
         printf '@echo off\r\nrem Copia los archivos del juego desde tu Diablo II: Resurrected a esta carpeta\r\ncd /d "%%~dp0"\r\n"%%~dp0d2port-importar.exe" --idioma %s\r\n' \
             "$code" > "$win/$name"
+        steam_bat "$code" "$win"
     done
     cp "$root/README.md" "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$win/"
 else
@@ -108,6 +135,7 @@ if [ -f "$root/build-web/d2port.wasm" ] && [ -f "$root/build-web/d2port.js" ]; t
             if [ $lang = es ]; then name="Importar Diablo II (Español).bat" code=esMX; else name="Import Diablo II (English).bat" code=enUS; fi
             printf '@echo off\r\nrem Copia los archivos del juego desde tu Diablo II: Resurrected a esta carpeta\r\ncd /d "%%~dp0"\r\n"%%~dp0d2port-importar.exe" --idioma %s\r\n' \
                 "$code" > "$web/$name"
+            steam_bat "$code" "$web"
         done
     else
         missing+=(web-windows)
@@ -118,6 +146,10 @@ if [ -f "$root/build-web/d2port.wasm" ] && [ -f "$root/build-web/d2port.js" ]; t
         for lang in es en; do
             if [ $lang = es ]; then name="Importar Diablo II (Español).sh" code=esMX; else name="Import Diablo II (English).sh" code=enUS; fi
             printf '#!/bin/sh\n# Copia los archivos del juego desde tu Diablo II: Resurrected a esta carpeta\ncd "$(dirname "$0")" && ./d2port-importar --idioma %s\n' \
+                "$code" > "$web/$name"
+            chmod +x "$web/$name"
+            if [ $lang = es ]; then name="Importar desde Steam BETA (Español).sh"; else name="Import from Steam BETA (English).sh"; fi
+            printf '#!/bin/sh\n# Baja Diablo II: Resurrected de tu cuenta de Steam y lo importa a esta carpeta (docs/steam.md)\ncd "$(dirname "$0")" && ./d2port-importar --steam --idioma %s\n' \
                 "$code" > "$web/$name"
             chmod +x "$web/$name"
         done

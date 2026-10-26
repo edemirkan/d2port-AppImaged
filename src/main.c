@@ -13,6 +13,7 @@
 #include "map.h"
 #include "menu.h"
 #include "net.h"
+#include "steamui.h"
 #include "units.h"
 #include "video.h"
 
@@ -1160,6 +1161,8 @@ static int run_window(const Options *o)
 
 int main(int argc, char **argv)
 {
+    if (argc >= 2 && !strcmp(argv[1], "--importar-steam")) /* la pantalla de importar desde Steam (la Pi; steamui.c) */
+        return steamui_run(argc >= 3 ? argv[2] : "enUS");
     compat_start(); /* (Windows: la carpeta del .exe y el registro) */
     Options o;
     if (parse_args(argc, argv, &o) != 0)

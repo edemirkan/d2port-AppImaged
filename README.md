@@ -13,7 +13,8 @@ original game's 2D files.
 
 > **This repository does not contain any Blizzard game file.** An importer
 > copies from your Diablo II: Resurrected installation only the files the
-> port uses. (The screenshots below show the port running with the game's
+> port uses (or, in beta, [downloads the game from your Steam
+> account](#importing-from-steam-beta), if you bought it there). (The screenshots below show the port running with the game's
 > art, which belongs to Blizzard.)
 
 > **This is a work in progress.** Acts 1 to 5 are fully playable, but
@@ -155,6 +156,22 @@ in the **Ports** menu, choose **Import Diablo II (English)** or **Importar
 Diablo II (Español)** (the other languages, from the main menu after
 importing). It is already written but not tested on a Pi yet.
 
+#### From Steam (BETA, no PC needed)
+
+> **Beta:** importing from Steam is new and has not been tried yet with a
+> real Steam account that owns the game. If it does not work, import from
+> a PC as above and please report it.
+
+If you bought **Diablo II: Resurrected on Steam** (the Infernal Edition),
+the Pi can download it from your account by itself: copy the port to
+Batocera, then in the **Ports** menu choose **Import from Steam BETA (English)**
+or **Importar desde Steam BETA (Español)**. A QR code appears on the screen: open
+the **Steam app on your phone**, tap the **shield** (Steam Guard) and scan
+it (your password is never typed on the Pi). Then it downloads the game,
+imports what the port uses and deletes the download. See
+[Importing from Steam (beta)](#importing-from-steam-beta) for the details
+(it needs about 15 GB free for a while).
+
 ### 3. Play
 
 In Batocera's **Ports** menu, **Diablo II** (update the game lists if it
@@ -237,6 +254,51 @@ Battle.net on the same PC.
   allow it on **private networks**.
 - To update, extract the new version over the old one: `data` and `save`
   are kept.
+
+## Importing from Steam (beta)
+
+> **This is a BETA.** It has only been tested with a simulated Steam
+> downloader, never with a real Steam account that owns the game. It may
+> fail; if it does, please open an issue with what the window says (on the
+> Pi, `/userdata/system/logs/d2port-steam.log`) and `importar-steam.log`.
+> Importing from an installed copy of the game (above) is the tested way.
+
+For **Diablo II: Resurrected bought on Steam** (the Infernal Edition, app
+2536520) when the game is not installed: the importer downloads it from
+your own Steam account and imports it as usual. Steam only hands the game
+files to an account that owns the game.
+
+- **On the Pi (Batocera):** Ports menu, **Import from Steam BETA (English)** /
+  **Importar desde Steam BETA (Español)**. It shows a QR code on the screen.
+- **On Windows:** double-click **`Import from Steam BETA (English).bat`** (or
+  **`Importar desde Steam BETA (Español).bat`**) in the Windows or web-browser
+  package. It opens a window with the QR code.
+- **On Linux:** `./d2port-importar --steam` (or the `Import from Steam`
+  `.sh` scripts next to the importer).
+
+To sign in, open the **Steam app on your phone**, tap the **shield** (Steam
+Guard) and **scan the QR code**. On a PC you can instead use
+`--usuario <account>`: then the downloader asks for your password and Steam
+Guard code in that window (they go to Steam, not to the port).
+
+What it does:
+
+1. The first time, it downloads **DepotDownloader** (an open-source Steam
+   downloader, GPL-2.0, about 32 MB) from its official GitHub page and
+   checks it is the expected file. It is kept in the `steam` folder next to
+   the game, for next time.
+2. It reads the list of files from Steam, checks there is room (**about
+   15 GB for a while**) and downloads only the game data (`.build.info` and
+   `Data`). On the Pi, if the SD card has no room, it uses a **USB drive**
+   with enough space by itself; on a PC you can choose another disk with
+   `--descarga <folder>`.
+3. It imports what the port uses (as with an installed game), writes
+   `importar-steam.log` and **deletes the download**
+   (`--conservar-descarga` keeps it).
+
+If the download stops (no internet, cancelled), open it again: it resumes
+where it stopped, without scanning the QR again. The login is remembered
+by DepotDownloader on that computer.
 
 ## Playing in a web browser
 

@@ -5,7 +5,7 @@
  * Blizzard: cada uno los pone desde su copia del juego.
  *
  *   d2port-importar [--idioma esMX|enUS|deDE|...] [--juego <carpeta del D2R>] [--destino <carpeta>] [--sin-pausa]
- *                   [--sin-cinematicas]
+ *                   [--sin-cinematicas] [--steam [--usuario <cuenta>] [--descarga <carpeta>] [--conservar-descarga]]
  *
  * Sin argumentos pregunta lo que falta. El destino es la carpeta `ports` del
  * paquete (o su `.data/d2port`): ahí está `archivos.txt`, la lista de lo que
@@ -214,6 +214,8 @@ static int is_game_dir(const char *dir)
     return exists(p);
 }
 
+#include "importar-steam.inc" /* --steam: bajarlo de Steam */
+
 static int find_game(char *out, size_t cap)
 {
     static const char *const k_dirs[] = {
@@ -397,6 +399,7 @@ static int extract_one(HANDLE storage, const char *casc_name, const char *out_pa
     HANDLE file;
     if (!CascOpenFile(storage, casc_name, 0, CASC_OPEN_BY_NAME, &file))
         return -1;
+    seg_note(file);
     ULONGLONG size = 0;
     if (!CascGetFileSize64(file, &size) || size > 0x7FFFFFFF) {
         CascCloseFile(file);
@@ -459,6 +462,7 @@ static int extract_stream(HANDLE storage, const char *casc_name, const char *out
     HANDLE file;
     if (!CascOpenFile(storage, casc_name, 0, CASC_OPEN_BY_NAME, &file))
         return -1;
+    seg_note(file);
     FILE *f = mkdirs_for(out_path) == 0 ? fopen(out_path, "wb") : NULL;
     int ok = f != NULL;
     while (ok) {
@@ -577,8 +581,8 @@ int main(int argc, char **argv)
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 #endif
-    char lang[8] = "", game[1024] = "", dest[1024] = "", pkg[1024];
-    int pause = 1, movies = 1;
+    char lang[8] = "", game[1024] = "", dest[1024] = "", pkg[1024], user[128] = "", dl[1024] = "";
+    int pause = 1, movies = 1, steam = 0, keep_dl = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--idioma") == 0 && i + 1 < argc)
             snprintf(lang, sizeof lang, "%s", argv[++i]);
@@ -590,13 +594,30 @@ int main(int argc, char **argv)
             pause = 0;
         else if (strcmp(argv[i], "--sin-cinematicas") == 0)
             movies = 0;
+        else if (strcmp(argv[i], "--steam") == 0)
+            steam = 1;
+        else if (strcmp(argv[i], "--usuario") == 0 && i + 1 < argc)
+            snprintf(user, sizeof user, "%s", argv[++i]);
+        else if (strcmp(argv[i], "--descarga") == 0 && i + 1 < argc)
+            snprintf(dl, sizeof dl, "%s", argv[++i]);
+        else if (strcmp(argv[i], "--conservar-descarga") == 0)
+            keep_dl = 1;
+        else if (strcmp(argv[i], "--ui") == 0)
+            s_ui = 1;
+        else if (strcmp(argv[i], "--prueba-steam") == 0)
+            return steam_self_test(argc - i - 1, argv + i + 1);
         else {
             printf("uso / usage: %s [--idioma esMX|enUS|esES|deDE|frFR|itIT|ptBR|plPL|ruRU|jaJP|koKR|zhCN|zhTW]"
                    " [--juego <Diablo II Resurrected>] [--destino <ports | código / source>]"
-                   " [--sin-pausa] [--sin-cinematicas]\n",
+                   " [--sin-pausa] [--sin-cinematicas]\n"
+                   "     [--steam [--usuario <cuenta / account>] [--descarga <carpeta / folder>] [--conservar-descarga]]\n",
                    argv[0]);
             return 2;
         }
+    }
+    if (s_ui) { /* (la pantalla de la Pi: nadie contesta preguntas, y lee cada renglón en cuanto sale) */
+        pause = 0;
+        setvbuf(stdout, NULL, _IOLBF, 0);
     }
 
     printf("Diablo II port - importador / importer\n\n");
@@ -615,10 +636,10 @@ int main(int argc, char **argv)
     snprintf(lang, sizeof lang, "%s", k_langs[li].code);
     s_en = strncmp(lang, "es", 2) != 0;
 
-    /* El juego original */
-    if (!game[0] && find_game(game, sizeof game) == 0)
+    /* El juego original (con --steam, después: se baja a la carpeta del paquete) */
+    if (!steam && !game[0] && find_game(game, sizeof game) == 0)
         printf(T("Diablo II: Resurrected encontrado en: %s\n", "Found Diablo II: Resurrected in: %s\n"), game);
-    while (!is_game_dir(game)) {
+    while (!steam && !is_game_dir(game)) {
         if (game[0])
             printf(T("No está el juego en \"%s\" (falta .build.info).\n", "The game is not in \"%s\" (no .build.info).\n"), game);
         ask(T("Carpeta de Diablo II: Resurrected (podés arrastrarla acá): ",
@@ -662,12 +683,35 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    HANDLE storage;
+    /* Desde Steam: bajarlo a <paquete>/steam/descarga (o --descarga) */
+    if (steam) {
+        int dl_fixed = dl[0] != 0;
+        if (!dl_fixed) {
+            char sd[1024];
+            join(sd, sizeof sd, pkg, "steam");
+            join(dl, sizeof dl, sd, "descarga");
+        }
+        if (steam_download(pkg, lang, user[0] ? user : NULL, dl, sizeof dl, dl_fixed, game, sizeof game) != 0) {
+            pause_exit(pause);
+            return 1;
+        }
+        s_seg_on = 1;
+        ui_phase(T("Copiando los archivos del juego", "Copying the game files"));
+    }
+
+    HANDLE storage = NULL;
     if (!CascOpenStorage(game, CASC_LOCALE_ALL, &storage)) {
-        printf(T("No pude abrir los archivos del juego en %s (error %d). ¿Está cerrado el juego y el Battle.net "
-                 "terminó de instalarlo?\n",
-                 "Could not open the game files in %s (error %d). Is the game closed and fully installed?\n"),
-               game, (int)GetCascError());
+        if (steam)
+            printf(T("No pude abrir los archivos bajados de Steam en %s (error %d). Quedan ahí; mandá esta salida a "
+                     "quien te pasó el port.\n",
+                     "Could not open the files downloaded from Steam in %s (error %d). They stay there; send this output "
+                     "to whoever gave you the port.\n"),
+                   game, (int)GetCascError());
+        else
+            printf(T("No pude abrir los archivos del juego en %s (error %d). ¿Está cerrado el juego y el Battle.net "
+                     "terminó de instalarlo?\n",
+                     "Could not open the game files in %s (error %d). Is the game closed and fully installed?\n"),
+                   game, (int)GetCascError());
         pause_exit(pause);
         return 1;
     }
@@ -744,12 +788,38 @@ int main(int argc, char **argv)
         }
         if (++done % 1000 == 0)
             printf(T("  %ld de %d...\n", "  %ld of %d...\n"), done, s_num);
+        if (done % 250 == 0)
+            ui_progress(100.0 * done / s_num);
     }
-    if (movies)
+    if (movies) {
+        if (s_ui)
+            ui_phase(T("Convirtiendo las cinemáticas (en la Pi, más de una hora)", "Converting the cinematics (over an hour on the Pi)"));
         import_movies(storage, pkg, lang);
+    }
     CascCloseStorage(storage);
     if (log)
         fclose(log);
+
+    /* Desde Steam: cuánto de lo bajado se usó (importar-steam.log) y borrar la descarga */
+    if (steam) {
+        char slog_path[1024];
+        join(slog_path, sizeof slog_path, pkg, "importar-steam.log");
+        FILE *slog = fopen(slog_path, "w");
+        seg_report(game, slog);
+        if (slog)
+            fclose(slog);
+        if (!missing && !failed && !keep_dl) {
+            long long size = 0;
+            walk(dl, add_size, &size, 0);
+            ui_phase(T("Borrando la descarga", "Deleting the download"));
+            remove_download(dl);
+            printf(T("Borrada la descarga de Steam (%.1f GB).\n", "Deleted the Steam download (%.1f GB).\n"), size / 1073741824.0);
+        } else if (missing || failed) {
+            printf(T("La descarga queda en %s (para volver a importar sin bajarla de nuevo).\n",
+                     "The download stays in %s (to import again without downloading it again).\n"),
+                   dl);
+        }
+    }
 
     char lang_path[1024];
     join(lang_path, sizeof lang_path, pkg, "idioma.txt");

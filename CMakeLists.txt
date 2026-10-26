@@ -75,6 +75,7 @@ add_executable(d2port
   src/net.c
   src/compat.c
   src/dmath.c
+  src/steamui.c
 )
 target_compile_options(d2port PRIVATE -Wall -Wextra)
 target_compile_definitions(d2port PRIVATE D2_VERSION="${D2_GIT_VERSION}")

@@ -143,3 +143,19 @@ freely, subject to the following restrictions:
    misrepresented as being the original software.
 3. This notice may not be removed or altered from any source distribution.
 ```
+
+## font8x8
+
+`src/font8x8.inc` (the letters of the "Import from Steam" screen, drawn
+before the game files are there) is Daniel Hepper's 8x8 bitmap font, in the
+public domain. <https://github.com/dhepper/font8x8>
+
+## DepotDownloader (not included)
+
+"Import from Steam" (`d2port-importar --steam`, docs/steam.md) uses
+DepotDownloader to download the game from the person's own Steam account.
+It is **not** part of this project's packages: the importer downloads the
+official release (`DepotDownloader_3.4.0`) from its GitHub page the first
+time, checks its SHA-256 and keeps its license next to it
+(`steam/LICENSE-DepotDownloader.txt`). DepotDownloader is licensed under the
+GNU General Public License v2.0. <https://github.com/SteamRE/DepotDownloader>

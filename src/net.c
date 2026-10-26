@@ -60,13 +60,78 @@ static const char *sock_strerror(int e)
 #define SOCK_AGAIN(e) ((e) == EAGAIN || (e) == EWOULDBLOCK || (e) == EINTR)
 #define SOCK_INPROGRESS(e) ((e) == EINPROGRESS)
 #define sock_strerror(e) strerror(e)
+#ifndef __EMSCRIPTEN__ /* (en el navegador no hay sockets: ver más abajo) */
 static void sock_nonblock(int s)
 {
     fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK);
 }
+#endif
 static void sock_init(void)
 {
 }
+#endif
+
+#ifdef __EMSCRIPTEN__
+/* El navegador no abre conexiones TCP ni UDP: todo pasa por d2port-servidor (tools/d2port-servidor.c) con
+   WebSockets, con los mismos mensajes. Las conexiones son números de web/red.js: unirse abre /red/conectar,
+   crear una partida /red/anfitrion (el servidor escucha por esta página y le pasa cada conexión que llega) y
+   buscar pregunta a /red/buscar */
+#include <emscripten.h>
+EM_JS_DEPS(d2net, "$UTF8ToString");
+EM_ASYNC_JS(int, web_net_open, (const char *path, int host), { return await Module.d2netOpen(UTF8ToString(path), host); });
+EM_JS(int, web_net_send, (int fd, const void *b, int n), { return Module.d2netSend(fd, HEAPU8.slice(b, b + n)); });
+EM_JS(int, web_net_recv, (int fd, void *b, int n), {
+    var s = Module.d2net.socks[fd], got = 0;
+    while (s && got < n && s.q.length) {
+        var d = s.q[0], k = Math.min(n - got, d.length - s.off);
+        HEAPU8.set(d.subarray(s.off, s.off + k), b + got);
+        got += k;
+        s.off += k;
+        if (s.off >= d.length) {
+            s.q.shift();
+            s.off = 0;
+        }
+    }
+    return got ? got : Module.d2netGone(s) ? 0 : -1;
+});
+EM_JS(void, web_net_close, (int fd), { Module.d2netClose(fd); });
+EM_JS(int, web_net_accept, (int fd), { return Module.d2netAccept(fd); });
+EM_JS(void, web_net_say, (int fd, const char *text), { Module.d2netSay(fd, UTF8ToString(text)); });
+EM_JS(void, web_net_stop, (int fd), { Module.d2netStop(fd); });
+EM_JS(void, web_net_find, (int port), { Module.d2netFind(port); });
+/* La próxima respuesta de los que buscan: la IP y el texto ("D2PN!..."), 0 = no hay */
+EM_JS(int, web_net_found, (char *ip, int ipn, char *msg, int msgn), {
+    var f = Module.d2net.found.shift();
+    if (!f)
+        return 0;
+    var put = function (s, at, cap) {
+        var n = Math.min(s.length, cap - 1);
+        for (var i = 0; i < n; i++)
+            HEAPU8[at + i] = s.charCodeAt(i) & 255;
+        HEAPU8[at + n] = 0;
+    };
+    put(f[0], ip, ipn);
+    put(f[1], msg, msgn);
+    return 1;
+});
+EM_JS(void, web_net_found_clear, (void), { Module.d2net.found = []; });
+#undef sock_close
+#define sock_close(s) web_net_close(s)
+static int s_ctrl = -1; /* la conexión con el servidor de la partida que se creó acá (por ahí pasan las otras) */
+static ssize_t sock_send(int fd, const void *b, size_t n)
+{
+    return web_net_send(fd, b, (int)n);
+}
+static ssize_t sock_recv(int fd, void *b, size_t n)
+{
+    int k = web_net_recv(fd, b, (int)n);
+    if (k < 0)
+        errno = EAGAIN;
+    return k;
+}
+#else
+#define sock_send(s, b, n) send(s, (const char *)(b), (int)(n), MSG_NOSIGNAL)
+#define sock_recv(s, b, n) recv(s, (char *)(b), (int)(n), 0)
 #endif
 
 /* La misma versión del código en todas (D2_VERSION: el commit, CMakeLists.txt): con eso la Pi, Linux y
@@ -222,12 +287,13 @@ static void send_to(Peer *p, Msg *m)
 static void flush_peer(Peer *p)
 {
     while (p->fd >= 0 && p->out_len > 0) {
-        ssize_t k = send(p->fd, (const char *)p->out, (int)p->out_len, MSG_NOSIGNAL);
+        ssize_t k = sock_send(p->fd, p->out, p->out_len);
         if (k <= 0) {
             if (k < 0 && SOCK_AGAIN(sock_err()))
                 return;
-            sock_close(p->fd);
-            p->fd = -1;
+            /* Se cortó: lo que falta se tira y la conexión queda, para que read_peer lo vea en el próximo
+               net_poll y avise (cerrarla acá, en silencio, dejaba a la partida esperando sus controles para
+               siempre: pasaba cuando el envío de net_input llegaba antes que el aviso de que se fue) */
             p->out_len = 0;
             return;
         }
@@ -251,19 +317,25 @@ static void broadcast(Msg *m) /* a todos los que están conectados (el anfitrió
 
 static void set_socket(int fd)
 {
+#ifdef __EMSCRIPTEN__
+    (void)fd; /* (las del navegador no esperan ni juntan: web/red.js; el servidor las pone sin juntar) */
+#else
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof one); /* (los controles, ya: sin juntarlos) */
     sock_nonblock(fd);
+#endif
 }
 
 /* D2_NET_BIND=ip (pruebas): escuchar solo en esa dirección (127.0.0.1: en Windows no pregunta el
-   firewall); si no, en todas */
+   firewall); si no, en todas (en el navegador escucha d2port-servidor, que mira lo mismo) */
+#ifndef __EMSCRIPTEN__
 static uint32_t bind_addr(void)
 {
     struct in_addr in;
     const char *b = getenv("D2_NET_BIND");
     return b && inet_pton(AF_INET, b, &in) == 1 ? in.s_addr : htonl(INADDR_ANY);
 }
+#endif
 
 static void peer_free(Peer *p)
 {
@@ -369,6 +441,16 @@ int net_host(int port, const NetLocal *mine)
     sock_init();
     s_host_mode = mine->mode;
     s_host_id = (unsigned)time(NULL) * 2654435761u ^ (unsigned)clock() ^ (unsigned)(uintptr_t)&mine;
+#ifdef __EMSCRIPTEN__
+    char path[48];
+    snprintf(path, sizeof path, "/red/anfitrion?p=%d", port);
+    s_listen = s_ctrl = web_net_open(path, 1);
+    if (s_listen < 0) { /* (no está el servidor, o el puerto ya está ocupado) */
+        fprintf(stderr, "red: no pude escuchar en el puerto %d (d2port-servidor)\n", port);
+        s_listen = s_ctrl = -1;
+        return -1;
+    }
+#else
     s_listen = (int)socket(AF_INET, SOCK_STREAM, 0);
     if (s_listen < 0)
         return -1;
@@ -399,6 +481,7 @@ int net_host(int port, const NetLocal *mine)
             sock_nonblock(s_udp);
         }
     }
+#endif
     s_role = NET_HOST;
     s_npeers = 1;
     Peer *me = &s_peer[0];
@@ -415,6 +498,18 @@ int net_join(const char *host, int port, const NetLocal *mine)
     net_close();
     reset_state();
     sock_init();
+#ifdef __EMSCRIPTEN__
+    char path[128];
+    int fd = -1;
+    if (host[0] && (strspn(host, "0123456789.") == strlen(host) || !strcmp(host, "localhost"))) {
+        snprintf(path, sizeof path, "/red/conectar?a=%.64s&p=%d", host, port);
+        fd = web_net_open(path, 0); /* (el servidor espera hasta 3 segundos a que conteste) */
+    }
+    if (fd < 0) {
+        fprintf(stderr, "red: no pude conectarme a %s:%d (d2port-servidor)\n", host, port);
+        return -1;
+    }
+#else
     struct addrinfo hints, *res = NULL;
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
@@ -456,6 +551,7 @@ int net_join(const char *host, int port, const NetLocal *mine)
             sock_close(fd);
         return -1;
     }
+#endif
     set_socket(fd);
     s_role = NET_CLIENT;
     s_npeers = 1;
@@ -790,7 +886,7 @@ static void read_peer(int pi)
     int closed = 0;
     for (;;) {
         uint8_t buf[16384];
-        ssize_t k = recv(p->fd, (char *)buf, (int)sizeof buf, 0);
+        ssize_t k = sock_recv(p->fd, buf, sizeof buf);
         if (k > 0) {
             buf_add(&p->in, &p->in_len, &p->in_cap, buf, (size_t)k);
             continue;
@@ -830,7 +926,11 @@ void net_poll(void)
         return;
     if (s_role == NET_HOST && s_listen >= 0 && !s_started) {
         for (;;) {
+#ifdef __EMSCRIPTEN__
+            int fd = web_net_accept(s_listen);
+#else
             int fd = (int)accept(s_listen, NULL, NULL);
+#endif
             if (fd < 0)
                 break;
             int slot = -1;
@@ -860,12 +960,20 @@ void net_poll(void)
             if (k <= 0)
                 break;
             if (k >= 5 && memcmp(q, "D2PN?", 5) == 0) {
-                char a[16];
+                char a[40]; /* (el número entero: con 16 se cortaba y sendto leía de más) */
                 int n = snprintf(a, sizeof a, "D2PN!%d %d %u", lobby_count(), s_host_mode, s_host_id);
-                sendto(s_udp, a, n, 0, (struct sockaddr *)&from, fl);
+                if (n > 0 && n < (int)sizeof a)
+                    sendto(s_udp, a, n, 0, (struct sockaddr *)&from, fl);
             }
         }
     }
+#ifdef __EMSCRIPTEN__
+    if (s_role == NET_HOST && s_listen >= 0 && !s_started) { /* (en el navegador contesta el servidor) */
+        char a[40];
+        snprintf(a, sizeof a, "D2PN!%d %d %u", lobby_count(), s_host_mode, s_host_id);
+        web_net_say(s_listen, a);
+    }
+#endif
     for (int i = 0; i < s_npeers; i++) {
         Peer *p = &s_peer[i];
         if (!p->used || p->fd < 0)
@@ -968,7 +1076,11 @@ int net_start(int diff, int mode, int terror, uint32_t seed, long long epoch)
     s->me = 0;
     s_started = 1;
     if (s_listen >= 0) { /* ya no entra nadie */
+#ifdef __EMSCRIPTEN__
+        web_net_stop(s_listen); /* (la conexión con el servidor sigue: por ahí pasan las otras, en s_ctrl) */
+#else
         sock_close(s_listen);
+#endif
         s_listen = -1;
     }
     build_frames(); /* (los primeros ticks, quietos) */
@@ -990,10 +1102,18 @@ const char *net_error(void)
 void net_close(void)
 {
     flush_all();
+#ifdef __EMSCRIPTEN__
+    for (int i = 0; i < NET_MAX_PEERS; i++) /* (las otras antes que la del servidor, por la que pasan) */
+        peer_free(&s_peer[i]);
+    if (s_ctrl >= 0)
+        sock_close(s_ctrl);
+    s_ctrl = -1;
+#else
     if (s_listen >= 0)
         sock_close(s_listen);
     if (s_udp >= 0)
         sock_close(s_udp);
+#endif
     s_listen = s_udp = -1;
     for (int i = 0; i < NET_MAX_PEERS; i++)
         peer_free(&s_peer[i]);
@@ -1009,7 +1129,9 @@ static int      s_found_players[8], s_found_mode[8], s_nfound;
 static unsigned s_found_id[8];
 
 /* Las direcciones de difusión de cada red de esta máquina (en el orden de la red): con
-   255.255.255.255 sola, Windows la manda por una sola placa, a veces la virtual de WSL o Hyper-V */
+   255.255.255.255 sola, Windows la manda por una sola placa, a veces la virtual de WSL o Hyper-V (en el
+   navegador pregunta d2port-servidor, con las mismas) */
+#ifndef __EMSCRIPTEN__
 static int bcast_addrs(uint32_t *out, int max)
 {
     int n = 0;
@@ -1045,12 +1167,21 @@ static int bcast_addrs(uint32_t *out, int max)
 #endif
     return n;
 }
+#endif
 
 /* La pregunta a toda la red (a cada red de la máquina, a 255.255.255.255 y a esta misma, por si la
    partida está en la misma PC); la primera vez abre el socket y empieza la lista (después la lista se
    mantiene: preguntar de nuevo solo agrega o actualiza) */
 void net_discover_start(void)
 {
+#ifdef __EMSCRIPTEN__
+    if (s_disc < 0) { /* (en el navegador pregunta el servidor: s_disc solo dice que se está buscando) */
+        s_nfound = 0;
+        s_disc = 1;
+        web_net_found_clear();
+    }
+    web_net_find(NET_PORT);
+#else
     if (s_disc < 0) {
         sock_init();
         s_nfound = 0;
@@ -1073,10 +1204,39 @@ void net_discover_start(void)
         a.sin_addr.s_addr = to[i];
         sendto(s_disc, "D2PN?", 5, 0, (struct sockaddr *)&a, sizeof a);
     }
+#endif
+}
+
+/* Una respuesta "D2PN!jugadores modo número" de la IP: una nueva, o la misma (por su número o su IP) con los
+   jugadores de ahora; de la misma, mejor la IP de la red que 127.0.0.1 */
+static void found_answer(const char *ip, const char *a)
+{
+    if (strncmp(a, "D2PN!", 5) != 0)
+        return;
+    int players = 0, mode = 0;
+    unsigned id = 0;
+    sscanf(a + 5, "%d %d %u", &players, &mode, &id);
+    int at = 0;
+    while (at < s_nfound && !(id && s_found_id[at] == id) && strcmp(s_found[at], ip) != 0)
+        at++;
+    if (at >= 8)
+        return;
+    if (at == s_nfound || (strcmp(s_found[at], "127.0.0.1") == 0 && strcmp(ip, "127.0.0.1") != 0))
+        snprintf(s_found[at], sizeof s_found[0], "%s", ip);
+    if (at == s_nfound)
+        s_nfound++;
+    s_found_players[at] = players;
+    s_found_mode[at] = mode;
+    s_found_id[at] = id;
 }
 
 int net_discover_poll(char (*hosts)[64], int *players, int *modes, int max)
 {
+#ifdef __EMSCRIPTEN__
+    char ip[64], a[64];
+    while (s_disc >= 0 && web_net_found(ip, sizeof ip, a, sizeof a))
+        found_answer(ip, a);
+#else
     while (s_disc >= 0) {
         char a[32];
         struct sockaddr_in from;
@@ -1085,28 +1245,11 @@ int net_discover_poll(char (*hosts)[64], int *players, int *modes, int max)
         if (k <= 0)
             break;
         a[k] = '\0';
-        if (k < 5 || memcmp(a, "D2PN!", 5) != 0)
-            continue;
         char ip[64];
         inet_ntop(AF_INET, &from.sin_addr, ip, sizeof ip);
-        int players = 0, mode = 0;
-        unsigned id = 0;
-        sscanf(a + 5, "%d %d %u", &players, &mode, &id);
-        /* "D2PN!jugadores modo número": una nueva, o la misma (por su número o su IP) con los jugadores
-           de ahora; de la misma, mejor la IP de la red que 127.0.0.1 */
-        int at = 0;
-        while (at < s_nfound && !(id && s_found_id[at] == id) && strcmp(s_found[at], ip) != 0)
-            at++;
-        if (at >= 8)
-            continue;
-        if (at == s_nfound || (strcmp(s_found[at], "127.0.0.1") == 0 && strcmp(ip, "127.0.0.1") != 0))
-            snprintf(s_found[at], sizeof s_found[0], "%s", ip);
-        if (at == s_nfound)
-            s_nfound++;
-        s_found_players[at] = players;
-        s_found_mode[at] = mode;
-        s_found_id[at] = id;
+        found_answer(ip, a);
     }
+#endif
     int n = s_nfound < max ? s_nfound : max;
     for (int i = 0; i < n; i++) {
         snprintf(hosts[i], 64, "%.63s", s_found[i]);
@@ -1118,8 +1261,10 @@ int net_discover_poll(char (*hosts)[64], int *players, int *modes, int max)
 
 void net_discover_stop(void)
 {
+#ifndef __EMSCRIPTEN__ /* (en el navegador no hay nada que cerrar) */
     if (s_disc >= 0)
         sock_close(s_disc);
+#endif
     s_disc = -1;
 }
 
@@ -1127,7 +1272,12 @@ const char *net_my_ip(void)
 {
     static char ip[64];
     ip[0] = '\0';
-#ifdef _WIN32
+#ifdef __EMSCRIPTEN__
+    /* La del servidor (la página la pone en D2_SERVIDOR_IP): las otras máquinas se conectan a él */
+    const char *e = getenv("D2_SERVIDOR_IP");
+    snprintf(ip, sizeof ip, "%s", e ? e : "");
+    return ip;
+#elif defined(_WIN32)
     /* La de la placa por la que sale todo: "conectar" un UDP afuera (no se manda nada) y preguntar */
     sock_init();
     int s = (int)socket(AF_INET, SOCK_DGRAM, 0);

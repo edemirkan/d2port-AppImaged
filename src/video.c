@@ -44,6 +44,25 @@ static uint8_t *s_px = g_fb.px;
 
 static int neon_check(void);
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+/* En el navegador, después de cada cuadro se espera al próximo refresco de la página (requestAnimationFrame):
+   así el juego le devuelve el control al navegador (con ASYNCIFY) y va al ritmo de la pantalla */
+EM_ASYNC_JS(void, web_next_frame, (void), {
+    /* (como mucho 50 ms: con la página tapada el navegador da un refresco por segundo, y la carga, que dibuja la
+       puerta muchas veces, se hacía eterna) */
+    await new Promise(function (resolve) {
+        var done = false;
+        function go() { if (!done) { done = true; resolve(); } }
+        requestAnimationFrame(go);
+        setTimeout(go, 50);
+    });
+});
+#define WEB_FRAME() web_next_frame()
+#else
+#define WEB_FRAME() ((void)0)
+#endif
+
 int video_init(int headless, int fullscreen, int scale)
 {
     clip_reset();
@@ -68,6 +87,12 @@ int video_init(int headless, int fullscreen, int scale)
     Uint32 flags = SDL_WINDOW_RESIZABLE;
     if (fullscreen)
         flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#ifdef __EMSCRIPTEN__
+    /* (en el navegador el lienzo queda en 800x600 y lo agranda la página: web/index.html) */
+    flags = 0;
+    win_w = SCREEN_W;
+    win_h = SCREEN_H;
+#endif
 
     s_hide_cursor = fullscreen && !getenv("D2_SHOW_CURSOR");
     if (s_hide_cursor)
@@ -310,6 +335,7 @@ void video_present(void)
     SDL_RenderClear(s_ren);
     SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
     SDL_RenderPresent(s_ren);
+    WEB_FRAME();
     if (s_hide_cursor && s_presents < 300) { /* los primeros segundos, por las dudas */
         s_presents++;
         hide_cursor();
@@ -377,6 +403,7 @@ void video_movie_frame(const uint8_t *y, int ys, const uint8_t *u, int us, const
         s_movie_shot[0] = '\0';
     }
     SDL_RenderPresent(s_ren);
+    WEB_FRAME();
     if (s_hide_cursor)
         hide_cursor();
 }
@@ -406,6 +433,14 @@ double video_convert_bench(void)
    puntero, como al arrancar con --fullscreen */
 void video_toggle_fullscreen(void)
 {
+#ifdef __EMSCRIPTEN__
+    /* (en el navegador: la página entera, y el lienzo se agranda con ella) */
+    EM_ASM({
+        if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(function () {});
+        else document.exitFullscreen();
+    });
+    return;
+#endif
     if (!s_win)
         return;
     int full = (SDL_GetWindowFlags(s_win) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;

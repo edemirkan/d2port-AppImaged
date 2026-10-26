@@ -88,6 +88,10 @@ void jobs_push(JobFn fn, void *ptr, int arg)
 
 void jobs_push_idle(JobFn fn, void *ptr, int arg)
 {
+#ifdef __EMSCRIPTEN__
+    (void)fn, (void)ptr, (void)arg; /* (en el navegador no se precarga lo que se puede saltear: se baja cuando haga falta) */
+    return;
+#endif
     if (!s_thread) {
         fn(ptr, arg);
         return;

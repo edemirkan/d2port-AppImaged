@@ -974,3 +974,6 @@
 { "J%d", "P%d" },
 { "LISTO", "準備完了" },
 { "Esperando al jugador %d", "プレイヤー%dを待っています" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "ローカルネットワークは d2port-servidor でゲームを開くと使えます" },

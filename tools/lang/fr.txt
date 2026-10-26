@@ -893,3 +893,4 @@
 892	J%d
 893	PRÊT
 894	En attente du joueur %d
+895	Pour le réseau local, ouvrez le jeu avec d2port-servidor

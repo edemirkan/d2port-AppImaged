@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diablo II (port)</title>
+<!-- La versión para el navegador del port (docs/web.md): d2port.js y d2port.wasm (el juego compilado con
+     Emscripten), los archivos del juego en data/ (los copia ahí el importador, desde tu Diablo II: Resurrected) y
+     archivos.txt (la lista). Se abre con d2port-servidor (los navegadores no cargan WebAssembly de un archivo
+     suelto), que además guarda las partidas en save/ de la carpeta y hace de puente para la red local. Con
+     cualquier otro servidor anda igual, con las partidas en el navegador (IndexedDB) y sin red local. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #c8b88a; font-family: Georgia, serif; overflow: hidden; }
+  #canvas { display: block; position: absolute; inset: 0; margin: auto; outline: none;
+            width: min(100vw, calc(100vh * 4 / 3)) !important; height: min(100vh, calc(100vw * 3 / 4)) !important;
+            image-rendering: pixelated; image-rendering: crisp-edges; background: #000; }
+  #panel { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+           text-align: center; background: #000; padding: 16px; box-sizing: border-box; }
+  #panel h1 { font-size: 34px; color: #b8a060; margin: 0 0 10px; letter-spacing: 2px; }
+  #panel p { max-width: 640px; line-height: 1.5; margin: 6px 0; color: #a89878; }
+  #start { margin-top: 18px; font: inherit; font-size: 20px; padding: 10px 36px; background: #2a1d10; color: #e0c890;
+           border: 1px solid #806030; cursor: pointer; }
+  #start:disabled { opacity: .45; cursor: default; }
+  #status { margin-top: 14px; font-size: 14px; color: #8a7a5a; min-height: 1.4em; }
+  .err { color: #d06040 !important; }
+  code { color: #e0c890; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<div id="panel">
+  <h1>DIABLO II</h1>
+  <p id="lead">Lord of Destruction &middot; port en el navegador</p>
+  <p>Teclado (WASD y flechas) o joystick. F11: pantalla completa. <span id="where"></span></p>
+  <button id="start" disabled>Cargando…</button>
+  <div id="status"></div>
+</div>
+<script>
+(function () {
+  var panel = document.getElementById('panel'), startBtn = document.getElementById('start');
+  var status = document.getElementById('status'), canvas = document.getElementById('canvas');
+  var ready = false, started = false, syncing = false, autoStart = false;
+  var server = null; /* d2port-servidor: {ip, version}; null = otro servidor (partidas en el navegador, sin red) */
+
+  function say(text, bad) { status.textContent = text; status.className = bad ? 'err' : ''; }
+
+  /* ---- Las partidas ----
+     Con d2port-servidor: /save es memoria; al empezar se leen las de save/ de la carpeta (GET partidas) y cada
+     pocos segundos se suben las que cambiaron (PUT) y se borran las que ya no están (DELETE): las mismas que la
+     versión de PC. Sin él: /save en el almacenamiento del navegador (IndexedDB de esta dirección). */
+  var known = {}; /* lo que tiene el servidor: archivo -> "fecha:tamaño" */
+
+  function walk(dir, out) {
+    var FS = Module.FS;
+    FS.readdir(dir).forEach(function (n) {
+      if (n === '.' || n === '..') return;
+      var p = dir + '/' + n, st = FS.stat(p);
+      if (FS.isDir(st.mode)) walk(p, out);
+      else out[p.slice('/save/'.length)] = (+st.mtime) + ':' + st.size;
+    });
+  }
+
+  function loadSaves() {
+    return fetch('partidas', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.text();
+    }).then(function (text) {
+      return Promise.all(text.split('\n').filter(Boolean).map(function (rel) {
+        return fetch('save/' + encodeURI(rel), { cache: 'no-store' }).then(function (r) {
+          if (!r.ok) throw new Error(rel);
+          return r.arrayBuffer();
+        }).then(function (b) {
+          var path = '/save/' + rel;
+          Module.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+          Module.FS.writeFile(path, new Uint8Array(b));
+        });
+      }));
+    }).then(function () { walk('/save', known); });
+  }
+
+  function pushSaves(leaving) {
+    var now = {}, jobs = [], total = 0;
+    try { walk('/save', now); } catch (e) { return Promise.resolve(); }
+    Object.keys(now).forEach(function (rel) { if (now[rel] !== known[rel]) total += +now[rel].split(':')[1]; });
+    var keep = leaving && total < 60000; /* (al cerrar la página, que lleguen igual: keepalive, hasta 64 KB) */
+    Object.keys(now).forEach(function (rel) {
+      if (now[rel] === known[rel]) return;
+      var stamp = now[rel], data = Module.FS.readFile('/save/' + rel);
+      jobs.push(fetch('save/' + encodeURI(rel), { method: 'PUT', body: data, keepalive: keep }).then(function (r) {
+        if (r.ok) known[rel] = stamp; /* (si cambió mientras tanto, la fecha es otra y se sube otra vez) */
+        else say('No pude guardar la partida (' + rel + ') en la carpeta save/.', true);
+      }));
+    });
+    Object.keys(known).forEach(function (rel) {
+      if (now[rel]) return;
+      jobs.push(fetch('save/' + encodeURI(rel), { method: 'DELETE', keepalive: keep }).then(function (r) {
+        if (r.ok) delete known[rel];
+      }));
+    });
+    return Promise.all(jobs).catch(function () {
+      say('No pude guardar la partida: ¿se cerró d2port-servidor?', true);
+    });
+  }
+
+  function save(leaving) {
+    if (!started || syncing || !Module.FS) return Promise.resolve();
+    syncing = true;
+    var done = server ? pushSaves(leaving) : new Promise(function (ok) { Module.FS.syncfs(false, function () { ok(); }); });
+    return done.then(function () { syncing = false; });
+  }
+  setInterval(save, 3000);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) save(true); });
+  window.addEventListener('pagehide', function () { save(true); });
+
+  /* ¿Están los archivos del juego? (la lista y uno de ellos) */
+  function checkData() {
+    return fetch('archivos.txt', { method: 'HEAD' }).then(function (r) {
+      if (!r.ok) throw new Error('Falta archivos.txt al lado de esta página.');
+      return fetch('data/global/animdata.d2', { method: 'HEAD' });
+    }).then(function (r) {
+      if (!r.ok) throw new Error('Faltan los archivos del juego en data/: importalos primero desde tu Diablo II: ' +
+                                 'Resurrected con el importador de esta carpeta (ver el README).');
+    });
+  }
+
+  function setup() {
+    document.getElementById('where').textContent = server
+      ? 'Las partidas se guardan en la carpeta save/ (d2port-servidor) y se puede jugar en red local.'
+      : 'Las partidas quedan guardadas en este navegador.';
+    window.Module = {
+      canvas: canvas,
+      print: function (t) { console.log(t); },
+      printErr: function (t) { console.warn(t); },
+      d2args: [], /* (lo que recibe main: las pruebas lo cambian antes de Jugar) */
+      preRun: [function () {
+        Module.FS.mkdir('/save');
+        if (server) {
+          Module.ENV.D2_SERVIDOR = '1'; /* (el menú deja entrar a la red local) */
+          Module.ENV.D2_SERVIDOR_IP = server.ip || '';
+        } else {
+          Module.FS.mount(Module.IDBFS, {}, '/save');
+        }
+        try { /* (al cambiar el idioma la página se recarga: sin las cinemáticas del principio) */
+          if (sessionStorage.getItem('d2_no_cinema')) {
+            Module.ENV.D2_NO_CINEMA = '1';
+            sessionStorage.removeItem('d2_no_cinema');
+            autoStart = true;
+          }
+          /* (las pruebas, una vez: sessionStorage d2_prueba = {"env": {...}, "args": [...]} y recargar) */
+          var test = sessionStorage.getItem('d2_prueba');
+          if (test) {
+            sessionStorage.removeItem('d2_prueba');
+            test = JSON.parse(test);
+            Object.keys(test.env || {}).forEach(function (k) { Module.ENV[k] = String(test.env[k]); });
+            Module.d2args = test.args || [];
+          }
+        } catch (e) {}
+      }],
+      onRuntimeInitialized: function () {
+        var saves = server ? loadSaves().catch(function (e) {
+          say('No pude leer las partidas de la carpeta save/: ' + e.message, true);
+        }) : new Promise(function (ok) {
+          Module.FS.syncfs(true, function (err) {
+            if (err) say('No pude leer las partidas guardadas en el navegador: ' + err, true);
+            ok();
+          });
+        });
+        saves.then(checkData).then(function () {
+          ready = true;
+          startBtn.disabled = false;
+          startBtn.textContent = 'Jugar';
+          if (status.className !== 'err') say('');
+          if (autoStart) start();
+        }).catch(function (e) { startBtn.textContent = 'Sin los archivos del juego'; say(e.message, true); });
+      },
+      onGameEnd: function () {
+        save();
+        started = false;
+        panel.style.display = 'flex';
+        startBtn.style.display = 'none';
+        document.getElementById('lead').textContent = 'El juego se cerró. Recargá la página para volver a jugar.';
+      },
+      /* El juego se vuelve a abrir (otro idioma): primero se guarda lo que cambió */
+      d2restart: function () {
+        syncing = false;
+        save().then(function () { location.reload(); });
+      },
+      onAbort: function (what) { panel.style.display = 'flex'; say('El juego se detuvo: ' + what, true); }
+    };
+    var s = document.createElement('script');
+    s.src = 'd2port.js';
+    s.onerror = function () { say('Falta d2port.js en esta carpeta.', true); };
+    document.body.appendChild(s);
+  }
+
+  /* Lo que se lee hasta el menú, bajado en paralelo antes de arrancar (precarga.txt); lo de entrar a jugar, en
+     segundo plano mientras tanto (precarga-juego.txt). Ver web/cache.js. */
+  function start() {
+    if (!ready || started) return;
+    started = true;
+    startBtn.disabled = true;
+    startBtn.textContent = 'Cargando…';
+    var t0 = performance.now();
+    Module.d2loadPrefetchList('precarga.txt').then(function (list) {
+      return Module.d2prefetch(list, 24, function (done, total) {
+        if (done % 25 === 0 || done === total) say('Cargando ' + done + ' de ' + total + ' archivos…');
+      });
+    }).then(function () {
+      console.log('web: precarga en ' + Math.round(performance.now() - t0) + ' ms');
+      panel.style.display = 'none';
+      canvas.focus();
+      Module.d2loadPrefetchList('precarga-juego.txt').then(function (list) {
+        setTimeout(function () { Module.d2prefetch(list, 4); }, 3000);
+      });
+      setTimeout(function () { Module.callMain(Module.d2args); }, 0);
+    });
+  }
+  /* El sonido: los navegadores lo dejan recién después de que la persona toca algo */
+  function wakeAudio() {
+    var ctx = Module.SDL2 && Module.SDL2.audioContext;
+    if (ctx && ctx.state === 'suspended') ctx.resume();
+  }
+  ['keydown', 'mousedown', 'touchstart'].forEach(function (ev) { document.addEventListener(ev, wakeAudio, true); });
+  startBtn.addEventListener('click', start);
+  document.addEventListener('keydown', function (e) { if (!started && ready && (e.key === 'Enter' || e.key === ' ')) start(); });
+  window.addEventListener('gamepadconnected', function () { if (!started) say('Joystick conectado.'); });
+
+  if (location.protocol === 'file:') {
+    startBtn.textContent = 'Abrilo con d2port-servidor';
+    say('Los navegadores no cargan el juego desde un archivo suelto: abrí d2port-servidor (en Windows, ' +
+        'd2port-servidor.exe) de esta carpeta.', true);
+  } else {
+    fetch('servidor', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (info) { server = info && info.servidor === 'd2port-servidor' ? info : null; setup(); });
+  }
+})();
+</script>
+</body>
+</html>

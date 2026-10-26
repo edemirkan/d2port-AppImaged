@@ -80,3 +80,4 @@
 877	Has liberado a %d soldados
 884	A: cogerla para engarzarla
 889	JUGADORES: ELEGID VUESTROS PERSONAJES
+895	Para la red local, abre el juego con d2port-servidor

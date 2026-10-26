@@ -974,3 +974,6 @@
 { "J%d", "P%d" },
 { "LISTO", "準備就緒" },
 { "Esperando al jugador %d", "等待玩家%d" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "要使用區域網路，請用 d2port-servidor 開啟遊戲" },

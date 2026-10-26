@@ -400,6 +400,12 @@ MenuResult menu_tick(const InputState *in)
                 return MENU_NONE;
             }
             if (s_sel == ITEM_NET) {
+#ifdef __EMSCRIPTEN__
+                if (!getenv("D2_SERVIDOR")) { /* (el navegador no abre conexiones: pasan por d2port-servidor) */
+                    note("Para la red local, abrí el juego con d2port-servidor");
+                    return MENU_NONE;
+                }
+#endif
                 s_count_sel = s_net_players - 1;
                 s_state = MS_NET_PLAYERS;
                 return MENU_NONE;
@@ -743,6 +749,8 @@ static void draw_main(void)
     char buf[64];
     snprintf(buf, sizeof buf, tr("Joysticks conectados: %d"), input_num_pads());
     font_draw_centered(SCREEN_W / 2, SCREEN_H - 50, buf, 2, COL(R_GRAY, 13));
+    if (s_note_ticks > 0) /* (en el navegador: la red local) */
+        font_draw_centered(SCREEN_W / 2, SCREEN_H - 72, s_note, font_fit(s_note, 2, 600), COL(R_RED, 13));
     if (s_sel == 1) {
         font_draw_centered(SCREEN_W / 2, SCREEN_H - 30, "Jugador 1: el primer joystick que se use o WASD   -   Jugador 2: el segundo o flechas",
                            1, COL(R_STONE, 12));

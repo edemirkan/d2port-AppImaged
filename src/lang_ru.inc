@@ -974,3 +974,6 @@
 { "J%d", "И%d" },
 { "LISTO", "ГОТОВ" },
 { "Esperando al jugador %d", "Ждём игрока %d" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "Для локальной сети откройте игру через d2port-servidor" },

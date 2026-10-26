@@ -184,10 +184,7 @@ static void room_add(int x, int y, int w, int h)
 
 static int file_exists(const char *path)
 {
-    FILE *f = fs_open(path);
-    if (f)
-        fclose(f);
-    return f != NULL;
+    return fs_exists(path); /* (en el navegador, sin bajarlo) */
 }
 
 /* Elige una variante al azar entre los archivos de la pieza que existan

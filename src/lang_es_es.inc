@@ -124,3 +124,6 @@
 
 /* La pantalla de las partidas con los dos jugadores a la vez */
 { "JUGADORES: ELIJAN SUS PERSONAJES", "JUGADORES: ELEGID VUESTROS PERSONAJES" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "Para la red local, abre el juego con d2port-servidor" },

@@ -14,6 +14,9 @@ uint8_t *fs_read(const char *path, size_t *size);
    que fs_read). NULL si no existe. */
 FILE *fs_open(const char *path);
 
+/* ¿Existe ese archivo del juego? (sin leerlo: en el navegador, por la lista de archivos) */
+int fs_exists(const char *path);
+
 /* Carpeta donde está "data/" (por defecto la carpeta actual) */
 void fs_set_root(const char *root);
 

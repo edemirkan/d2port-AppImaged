@@ -133,10 +133,9 @@ static FILE *open_movie(const char *name)
 
 int cinema_exists(const char *name)
 {
-    FILE *f = open_movie(name);
-    if (f)
-        fclose(f);
-    return f != NULL;
+    char path[96];
+    snprintf(path, sizeof path, "data/global/video/%s.mpg", name);
+    return fs_exists(path); /* (sin abrirlo: en el navegador se bajaba entero) */
 }
 
 static plm_t *open_plm(const char *name)

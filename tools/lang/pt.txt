@@ -893,3 +893,4 @@
 892	J%d
 893	PRONTO
 894	Esperando o jogador %d
+895	Para a rede local, abra o jogo com o d2port-servidor

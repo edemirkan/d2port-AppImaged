@@ -974,3 +974,6 @@
 { "J%d", "P%d" },
 { "LISTO", "준비 완료" },
 { "Esperando al jugador %d", "플레이어 %d을(를) 기다리는 중" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "로컬 네트워크는 d2port-servidor로 게임을 열면 쓸 수 있습니다" },

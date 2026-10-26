@@ -8,6 +8,9 @@
 #                               entero)
 #   publicar/diablo2-port-windows/  el port para Windows (d2port.exe, SDL2.dll),
 #                               su importador y dos .bat para importar
+#   publicar/diablo2-port-web/  la versión para el navegador (WebAssembly, docs/web.md): se abre con
+#                               d2port-servidor (Linux y Windows), que guarda las partidas en save/ y hace de
+#                               puente de la red local; los importadores copian el juego a su data/
 #   publicar/*.zip              lo mismo comprimido, para las descargas
 #
 # La skin personal del Brujo (sus dibujos editados, .d2rw) no se publica.
@@ -79,12 +82,59 @@ else
     missing+=(windows-juego)
 fi
 
-# Que la Pi y Windows sean de la misma versión del código (la red local junta máquinas de la misma:
-# compilar después del último commit, volviendo a configurar: cmake -S . -B build-pi / build-win)
+# El navegador (docs/web.md): la página, el juego en WebAssembly (build-web: scripts/build-web.sh), la lista de
+# archivos, las de precarga, d2port-servidor de Linux y de Windows (sirve la página, guarda las partidas en save/
+# y hace de puente de la red local; también de scripts/build-web.sh) y los importadores de Windows y Linux, que
+# copian los archivos del juego a su data/. Sin publicar ninguna página: cada uno lo abre en su computadora (o
+# lo sube a donde quiera, con sus archivos: con otro servidor, las partidas quedan en el navegador y no hay red)
+web="$pub/diablo2-port-web"
+srv="$root/build-web/servidor"
+if [ -f "$root/build-web/d2port.wasm" ] && [ -f "$root/build-web/d2port.js" ]; then
+    mkdir -p "$web"
+    cp "$root/build-web/d2port.js" "$root/build-web/d2port.wasm" "$web/"
+    cp "$root/web/index.html" "$root/web/precarga.txt" "$root/web/precarga-juego.txt" "$web/"
+    cp "$game/archivos.txt" "$web/"
+    for s in linux/d2port-servidor windows/d2port-servidor.exe; do
+        if [ -f "$srv/$s" ]; then
+            cp "$srv/$s" "$web/"
+        else
+            missing+=("servidor-${s%%/*}")
+        fi
+    done
+    [ -f "$web/d2port-servidor" ] && chmod +x "$web/d2port-servidor"
+    if [ -f "$imp/windows/d2port-importar.exe" ]; then
+        cp "$imp/windows/d2port-importar.exe" "$web/"
+        for lang in es en; do
+            if [ $lang = es ]; then name="Importar Diablo II (Español).bat" code=esMX; else name="Import Diablo II (English).bat" code=enUS; fi
+            printf '@echo off\r\nrem Copia los archivos del juego desde tu Diablo II: Resurrected a esta carpeta\r\ncd /d "%%~dp0"\r\n"%%~dp0d2port-importar.exe" --idioma %s\r\n' \
+                "$code" > "$web/$name"
+        done
+    else
+        missing+=(web-windows)
+    fi
+    if [ -f "$imp/linux/d2port-importar" ]; then
+        cp "$imp/linux/d2port-importar" "$web/"
+        chmod +x "$web/d2port-importar"
+        for lang in es en; do
+            if [ $lang = es ]; then name="Importar Diablo II (Español).sh" code=esMX; else name="Import Diablo II (English).sh" code=enUS; fi
+            printf '#!/bin/sh\n# Copia los archivos del juego desde tu Diablo II: Resurrected a esta carpeta\ncd "$(dirname "$0")" && ./d2port-importar --idioma %s\n' \
+                "$code" > "$web/$name"
+            chmod +x "$web/$name"
+        done
+    else
+        missing+=(web-linux)
+    fi
+    cp "$root/README.md" "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$web/"
+else
+    missing+=(web)
+fi
+
+# Que la Pi, Windows y el navegador sean de la misma versión del código (la red local junta máquinas de la misma:
+# compilar después del último commit, volviendo a configurar: cmake -S . -B build-pi / build-win; build-web.sh)
 ver=$(git -C "$root" rev-parse --short=12 HEAD 2>/dev/null || echo dev)
-for b in "$game/d2port" "$pub/diablo2-port-windows/d2port.exe"; do
+for b in "$game/d2port" "$pub/diablo2-port-windows/d2port.exe" "$web/d2port.wasm"; do
     if [ -f "$b" ] && ! grep -q "D2PN2 $ver" "$b"; then
-        echo "ERROR: $b no es de la versión $ver: volvé a configurar y compilar (cmake -S . -B build-pi o build-win)"
+        echo "ERROR: $b no es de la versión $ver: volvé a configurar y compilar (cmake -S . -B build-pi o build-win, scripts/build-web.sh)"
         exit 1
     fi
 done
@@ -100,7 +150,7 @@ fi
 # Los .zip (los permisos de ejecución quedan en el zip)
 ( cd "$pub" && python3 - <<'EOF'
 import os, zipfile
-for name in [n for n in ('diablo2-port', 'diablo2-port-windows') if os.path.isdir(n)]:
+for name in [n for n in ('diablo2-port', 'diablo2-port-windows', 'diablo2-port-web') if os.path.isdir(n)]:
     with zipfile.ZipFile(name + '.zip', 'w', zipfile.ZIP_DEFLATED) as z:
         for base, dirs, files in os.walk(name):
             dirs.sort()
@@ -114,5 +164,6 @@ EOF
 )
 du -sh "$port" "$pub"/*.zip
 [ -d "$win" ] && du -sh "$win"
-[ ${#missing[@]} -eq 0 ] || echo "Faltan importadores (compilar con scripts/build-importador.sh): ${missing[*]}"
+[ -d "$web" ] && du -sh "$web"
+[ ${#missing[@]} -eq 0 ] || echo "Faltan (los importadores: scripts/build-importador.sh; el servidor: scripts/build-web.sh): ${missing[*]}"
 echo "Listo: $pub"

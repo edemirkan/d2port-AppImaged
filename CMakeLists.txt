@@ -20,7 +20,9 @@ if(NOT D2_GIT_VERSION)
   set(D2_GIT_VERSION dev)
 endif()
 
-find_package(SDL2 REQUIRED)
+if(NOT EMSCRIPTEN)
+  find_package(SDL2 REQUIRED)
+endif()
 
 # En la Pi (Cortex-A53, que ejecuta en orden) la vectorización SLP de GCC
 # arma los colores de la conversión del cuadro con NEON pasando por la pila:
@@ -76,7 +78,22 @@ add_executable(d2port
 )
 target_compile_options(d2port PRIVATE -Wall -Wextra)
 target_compile_definitions(d2port PRIVATE D2_VERSION="${D2_GIT_VERSION}")
-if(WIN32)
+if(EMSCRIPTEN)
+  # El navegador (emcmake cmake -S . -B build-web; docs/web.md): el SDL2 de Emscripten, ASYNCIFY para que
+  # los bucles del juego y la lectura de los archivos (que se piden al servidor) puedan esperar sin trabar la
+  # página, las partidas en el almacenamiento del navegador (IDBFS) si no está d2port-servidor, y la red local por
+  # d2port-servidor (web/red.js). Sale d2port.js + d2port.wasm, que carga web/index.html.
+  target_compile_options(d2port PRIVATE "SHELL:-s USE_SDL=2")
+  target_compile_options(d2fmtlib PRIVATE "SHELL:-s USE_SDL=2")
+  target_link_libraries(d2port PRIVATE d2fmtlib m idbfs.js)
+  target_link_options(d2port PRIVATE "SHELL:-s USE_SDL=2" "SHELL:-s ASYNCIFY=1" "SHELL:-s ASYNCIFY_STACK_SIZE=1048576"
+                      "SHELL:-s ALLOW_MEMORY_GROWTH=1" "SHELL:-s INITIAL_MEMORY=268435456" "SHELL:-s STACK_SIZE=2097152"
+                      "SHELL:-s FORCE_FILESYSTEM=1" "SHELL:-s ENVIRONMENT=web" "SHELL:-s EXIT_RUNTIME=0"
+                      "SHELL:-s EXPORTED_RUNTIME_METHODS=['FS','IDBFS','ENV','callMain']" "SHELL:-s INVOKE_RUN=0"
+                      "SHELL:--pre-js \"${CMAKE_SOURCE_DIR}/web/cache.js\"" "SHELL:--pre-js \"${CMAKE_SOURCE_DIR}/web/red.js\"")
+  set_property(TARGET d2port APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/web/cache.js;${CMAKE_SOURCE_DIR}/web/red.js")
+  set_target_properties(d2port PROPERTIES SUFFIX ".js")
+elseif(WIN32)
   # Windows (cmake/mingw-w64.cmake): el main de SDL (antes que SDL2), clock_gettime de winpthread, sin
   # ventana de consola y sin las DLL de MinGW (al lado del .exe solo va SDL2.dll)
   target_link_libraries(d2port PRIVATE d2fmtlib SDL2::SDL2main SDL2::SDL2 m pthread ws2_32 iphlpapi)

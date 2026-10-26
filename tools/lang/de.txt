@@ -893,3 +893,4 @@
 892	S%d
 893	BEREIT
 894	Warte auf Spieler %d
+895	Für das lokale Netzwerk öffne das Spiel mit d2port-servidor

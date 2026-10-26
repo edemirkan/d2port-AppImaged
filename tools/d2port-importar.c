@@ -653,6 +653,9 @@ int main(int argc, char **argv)
     join(list, sizeof list, pkg, s_list_name);
     join(win_exe, sizeof win_exe, pkg, "d2port.exe");
     int win_pkg = exists(win_exe); /* el paquete de Windows: d2port.exe al lado de archivos.txt */
+    char web_wasm[1024];
+    join(web_wasm, sizeof web_wasm, pkg, "d2port.wasm");
+    int web_pkg = exists(web_wasm); /* la versión para el navegador: d2port.wasm al lado de archivos.txt */
     if (load_list(list) != 0 || s_num == 0) {
         printf(T("No pude leer %s\n", "Could not read %s\n"), list);
         pause_exit(pause);
@@ -765,6 +768,11 @@ int main(int argc, char **argv)
                        "  cmake -S . -B build && cmake --build build -j && ./build/d2port\n",
                        "Done. Now you can build and play from the source:\n"
                        "  cmake -S . -B build && cmake --build build -j && ./build/d2port\n"));
+    else if (!missing && !failed && web_pkg)
+        printf("%s", T("Listo. Para jugar en el navegador, abrí d2port-servidor de esta carpeta (en Windows,\n"
+                       "d2port-servidor.exe).\n",
+                       "Done. To play in the browser, open d2port-servidor in this folder (on Windows,\n"
+                       "d2port-servidor.exe).\n"));
     else if (!missing && !failed && win_pkg)
         printf("%s", T("Listo. Para jugar, abrí d2port.exe (en esta carpeta).\n",
                        "Done. To play, open d2port.exe (in this folder).\n"));

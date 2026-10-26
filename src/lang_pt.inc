@@ -974,3 +974,6 @@
 { "J%d", "J%d" },
 { "LISTO", "PRONTO" },
 { "Esperando al jugador %d", "Esperando o jogador %d" },
+
+/* La versión para el navegador (docs/web.md) */
+{ "Para la red local, abrí el juego con d2port-servidor", "Para a rede local, abra o jogo com o d2port-servidor" },

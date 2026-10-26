@@ -3,7 +3,8 @@
 [![d2port: split screen on a Raspberry Pi](https://img.youtube.com/vi/zcsaPHeL3lw/hqdefault.jpg)](https://youtube.com/shorts/zcsaPHeL3lw)
 
 A Diablo II–style engine **written from scratch** in C99 + SDL2, to play on
-**Batocera on a Raspberry Pi 3B** (and on **Windows**) with a gamepad: alone,
+**Batocera on a Raspberry Pi 3B** (and on **Windows**, Linux or a
+[web browser](#playing-in-a-web-browser)) with a gamepad: alone,
 two players on the same screen, or **up to 8 players over the local network** (for example
 four Pis with two players each). Besides the story it has its own wave
 mode, the **Echo of Hatred**. It uses the graphics, maps, tables, sounds and
@@ -236,6 +237,41 @@ Battle.net on the same PC.
   allow it on **private networks**.
 - To update, extract the new version over the old one: `data` and `save`
   are kept.
+
+## Playing in a web browser
+
+There is also a build for the web browser (WebAssembly). Nothing is hosted
+online: you open it on your own computer, with the game files imported from
+your own Diablo II: Resurrected.
+
+1. Download **`diablo2-port-web.zip`** from the
+   [releases](https://github.com/rodrireddev/d2port/releases) and extract it.
+2. Import the game files into that folder, as above: **`Import Diablo II
+   (English).bat`** on Windows or **`Import Diablo II (English).sh`** on
+   Linux (or the `Importar … (Español)` ones). They go to its `data` folder.
+3. Open **`d2port-servidor.exe`** (Windows) or **`d2port-servidor`**
+   (Linux): it starts a small server for this computer only and opens the
+   game in your browser (`http://localhost:8642/`). Browsers do not run
+   WebAssembly from a plain file, which is why it needs this. Close that
+   window to stop it.
+
+- Use a recent **Chrome, Edge or Firefox**. It plays with the keyboard or a
+  gamepad; **F11** is full screen. The first click or key also turns on the
+  sound (browsers ask for that).
+- **Saved games** go to the `save` folder, like the PC version (the same
+  files).
+- The **local network** works too: browsers cannot open those connections,
+  so `d2port-servidor` does it for the page. You can create a game or join
+  one with the Pis and PCs on your network (all of the same version). When
+  you create one, Windows may ask to let `d2port-servidor` through the
+  firewall, as it does for `d2port.exe`.
+- The first files load in a couple of seconds; new areas can take a moment
+  the first time, while their files load.
+- On a Mac (there is no `d2port-servidor` for it) or on any other web server,
+  it works the same with a plain local server (for example
+  `python3 -m http.server 8642 --bind 127.0.0.1` in that folder), but saved
+  games then stay in the browser and there is no local network. Only for
+  yourself: the game files belong to Blizzard and must not be published.
 
 ---
 
@@ -938,6 +974,10 @@ cmake --build build-pi -j
 cmake -S . -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake \
       -DSDL2_DIR=$HOME/sdl2-mingw/SDL2-2.30.12/x86_64-w64-mingw32/lib/cmake/SDL2
 cmake --build build-win -j --target d2port
+# The web browser build (WebAssembly; Emscripten in ~/emsdk): build-web/d2port.js and d2port.wasm, and
+# d2port-servidor for Linux and Windows (tools/d2port-servidor.c) in build-web/servidor.
+# docs/web.md explains how it works; scripts/precarga-web.sh updates its preload lists
+bash scripts/build-web.sh
 bash scripts/package-batocera.sh     # dist/ports, with the game files (for your own use)
 bash scripts/build-importador.sh     # the importer for Linux, the Pi and Windows
 bash scripts/package-release.sh      # publicar/: the packages without Blizzard files

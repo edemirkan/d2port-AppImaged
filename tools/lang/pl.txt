@@ -893,3 +893,4 @@
 892	G%d
 893	GOTOWY
 894	Czekam na gracza %d
+895	Do sieci lokalnej otwórz grę przez d2port-servidor

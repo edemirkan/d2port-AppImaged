@@ -17,6 +17,9 @@
 #include "video.h"
 
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #ifdef _WIN32
 #include <process.h>
 #else
@@ -1235,6 +1238,15 @@ int main(int argc, char **argv)
     input_shutdown();
     video_shutdown();
     SDL_Quit();
+#ifdef __EMSCRIPTEN__
+    /* En el navegador: el idioma nuevo, cargando la página otra vez (sin las cinemáticas: lo recuerda la página);
+       al salir, la página lo avisa (y guarda lo que falte en el navegador) */
+    if (s_restart) /* (d2restart: guarda las partidas, el idioma nuevo, antes de recargar) */
+        EM_ASM({ try { sessionStorage.setItem('d2_no_cinema', '1'); } catch (e) {} if (Module.d2restart) Module.d2restart(); else location.reload(); });
+    else
+        EM_ASM({ if (Module.onGameEnd) Module.onGameEnd(); });
+    return rc;
+#endif
     if (s_restart) { /* otra vez, sin las cinemáticas del principio */
         fflush(NULL);
 #ifdef _WIN32
